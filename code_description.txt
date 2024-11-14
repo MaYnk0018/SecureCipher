@@ -1,0 +1,192 @@
+from Crypto.PublicKey import RSA
+from Crypto.Cipher import PKCS1_OAEP, AES
+from Crypto.Random import get_random_bytes
+from Crypto.Util.Padding import pad, unpad
+import os
+
+Crypto.PublicKey.RSA: This is used to generate and manage RSA public and private keys.
+Crypto.Cipher.PKCS1_OAEP: This module implements the OAEP padding scheme for RSA encryption and decryption, which adds security to RSA.
+Crypto.Cipher.AES: This is the AES (Advanced Encryption Standard) module used for symmetric encryption and decryption.
+Crypto.Random.get_random_bytes: This function generates secure random bytes, which are used to create encryption keys and initialization vectors (IVs).
+Crypto.Util.Padding.pad/unpad: These functions handle padding for AES encryption. AES requires data to be a multiple of its block size (16 bytes), so padding is added if necessary.
+os: The os module provides functions for interacting with the operating system, such as handling file paths.
+RSA Key Generation Function
+python
+def generate_rsa_keys():
+    key = RSA.generate(2048)
+    private_key = key.export_key()
+    public_key = key.publickey().export_key()
+
+    # Save keys to files
+    with open("private.pem", "wb") as priv_file:
+        priv_file.write(private_key)
+    with open("public.pem", "wb") as pub_file:
+        pub_file.write(public_key)
+
+    print("RSA keys generated and saved.")
+
+RSA.generate(2048): This generates a new RSA key pair with a key size of 2048 bits. The larger the key size, the more secure but slower the encryption process.
+key.export_key(): Exports the private key in a format that can be saved to a file.
+key.publickey().export_key(): Extracts and exports the corresponding public key from the RSA key pair.
+File Handling (with open...):
+The private key is saved in a file named private.pem.
+The public key is saved in a file named public.pem.
+The wb mode means "write binary", which is required for writing binary data (like keys).
+print("RSA keys generated and saved."): A simple message to indicate that the keys have been successfully generated and saved.
+Load RSA Keys Function
+python
+def load_rsa_keys():
+    try:
+        with open("private.pem", "rb") as priv_file:
+            private_key = RSA.import_key(priv_file.read())
+        with open("public.pem", "rb") as pub_file:
+            public_key = RSA.import_key(pub_file.read())
+        return private_key, public_key
+    except FileNotFoundError:
+        print("RSA key files not found. Please generate keys first.")
+        return None, None
+
+File Handling (with open...):
+Opens the private.pem file in read-binary (rb) mode and reads its contents into memory.
+Uses RSA.import_key() to convert the binary data back into an RSA private key object.
+Similarly, reads and imports the public key from public.pem.
+Return Statement: Returns both the private and public keys as objects.
+Exception Handling (try-except):
+If either of the .pem files is not found, it catches the FileNotFoundError, prints an error message, and returns None.
+Hybrid Encryption Function
+python
+def hybrid_encrypt(file_path, public_key):
+    try:
+        # Step 1: Generate a random AES key and IV (initialization vector)
+        aes_key = get_random_bytes(32)  # 256-bit AES key
+        iv = get_random_bytes(16)       # 128-bit IV for AES
+
+        # Step 2: Encrypt the file data using AES
+        aes_cipher = AES.new(aes_key, AES.MODE_CBC, iv)
+
+        with open(file_path, "rb") as f:
+            file_data = f.read()
+
+        encrypted_data = aes_cipher.encrypt(pad(file_data, AES.block_size))
+
+        # Step 3: Encrypt the AES key using RSA public key
+        rsa_cipher = PKCS1_OAEP.new(public_key)
+        encrypted_aes_key = rsa_cipher.encrypt(aes_key)
+
+        # Step 4: Save the encrypted data, IV, and encrypted AES key to a new file
+        enc_file_path = file_path + ".enc"
+
+        with open(enc_file_path, "wb") as f_enc:
+            f_enc.write(iv + encrypted_aes_key + encrypted_data)
+
+        print(f"File '{file_path}' encrypted successfully as '{enc_file_path}'.")
+
+    except FileNotFoundError:
+        print(f"File '{file_path}' not found! Please check the file path.")
+
+Step 1 (AES Key Generation):
+Generates a random 32-byte (256-bit) AES symmetric encryption key using get_random_bytes(32).
+Generates a random 16-byte initialization vector (IV) using get_random_bytes(16). The IV ensures that even if two identical files are encrypted with the same AES key, their ciphertexts will be different.
+Step 2 (AES Encryption):
+Creates an AES cipher object in CBC mode (AES.MODE_CBC) using the generated AES key and IV.
+Reads the file content in binary mode (rb) into memory.
+Pads the file data to ensure its length is a multiple of AES's block size (16 bytes).
+Encrypts the padded data using aes_cipher.encrypt().
+Step 3 (RSA Encryption of AES Key):
+Creates an RSA cipher object using OAEP padding (PKCS1_OAEP.new()).
+Encrypts the AES symmetric key using the recipient's RSA public key.
+Step 4 (Save Encrypted Data):
+Combines IV + encrypted AES key + encrypted file data into one binary stream.
+Writes this combined data into a new file with .enc appended to its name.
+Exception Handling:
+If there’s an issue reading the input file (e.g., it doesn’t exist), it catches FileNotFoundError and prints an error message.
+Hybrid Decryption Function
+python
+def hybrid_decrypt(enc_file_path, private_key):
+    try:
+        # Step 1: Read the IV, encrypted AES key, and encrypted data from the file
+        with open(enc_file_path, "rb") as f_enc:
+            iv = f_enc.read(16)  # First 16 bytes are the IV
+            encrypted_aes_key = f_enc.read(private_key.size_in_bytes())  # Next bytes are RSA-encrypted AES key
+            encrypted_data = f_enc.read()  # The rest is encrypted file data
+
+        # Step 2: Decrypt the AES key using RSA private key
+        rsa_cipher = PKCS1_OAEP.new(private_key)
+        aes_key = rsa_cipher.decrypt(encrypted_aes_key)
+
+        # Step 3: Decrypt the file data using AES
+        aes_cipher = AES.new(aes_key, AES.MODE_CBC, iv)
+        
+        decrypted_data = unpad(aes_cipher.decrypt(encrypted_data), AES.block_size)
+
+        # Step 4: Save decrypted data back to a new file with '_decrypted' suffix
+        original_file_name = enc_file_path.replace(".enc", "")
+        
+        base_name, ext = os.path.splitext(original_file_name)
+        new_file_name = base_name + "_decrypted" + ext
+
+        with open(new_file_name, "wb") as f_dec:
+            f_dec.write(decrypted_data)
+
+        print(f"File '{enc_file_path}' decrypted successfully as '{new_file_name}'.")
+
+    except FileNotFoundError:
+        print(f"File '{enc_file_path}' not found! Please check the file path.")
+    except ValueError as e:
+        print(f"Decryption failed: {str(e)}")
+
+Step 1 (Read Encrypted Data):
+Reads three parts from the .enc file:
+The first 16 bytes are read as IV (iv = f_enc.read(16)).
+The next portion is read as RSA-encrypted AES key (f_enc.read(private_key.size_in_bytes())). The size depends on how large your RSA private key is.
+The rest of the file is read as encrypted data.
+Step 2 (Decrypt AES Key):
+Uses RSA decryption (rsa_cipher.decrypt()) to decrypt the previously-encrypted AES symmetric key.
+Step 3 (AES Decryption):
+Creates an AES cipher object using CBC mode (AES.MODE_CBC) with the decrypted AES symmetric key and IV.
+Decrypts the encrypted data using this cipher object.
+Removes any padding that was added during encryption using unpad().
+Step 4 (Save Decrypted Data):
+Constructs a new filename by appending _decrypted before its extension.
+Example: If you decrypt file.txt.enc, it will save it as file_decrypted.txt.
+Writes this decrypted content into a new binary file.
+Exception Handling:
+Catches errors like missing files or decryption failures due to incorrect keys or corrupted files.
+Main Program Logic
+python
+if __name__ == "__main__":
+    try:
+        choice = input("Do you want to (G)enerate keys, (E)ncrypt or (D)ecrypt?: ").lower()
+
+        if choice == 'g':
+            generate_rsa_keys()
+
+        elif choice == 'e':
+            private_key, public_key = load_rsa_keys()
+            if public_key is None:
+                print("Cannot proceed without RSA keys.")
+            else:
+                file_to_encrypt = input("Enter the path of the file to encrypt: ")
+                hybrid_encrypt(file_to_encrypt, public_key)
+
+        elif choice == 'd':
+            private_key, public_key = load_rsa_keys()
+            if private_key is None:
+                print("Cannot proceed without RSA keys.")
+            else:
+                file_to_decrypt = input("Enter the path of the encrypted file (.enc): ")
+                hybrid_decrypt(file_to_decrypt, private_key)
+
+        else:
+            print("Invalid choice! Please enter 'G' for generating keys, 'E' for encryption or 'D' for decryption.")
+    
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
+
+User Input (input()):
+Asks whether you want to generate keys (g), encrypt (e) or decrypt (d) files.
+Based on user input (choice.lower()):
+If user chooses 'g', it generates new RSA keys by calling generate_rsa_keys().
+If user chooses 'e', it loads existing RSA keys using load_rsa_keys(). Then it prompts for a filename and calls hybrid_encrypt() to encrypt that file.
+If user chooses 'd', it loads existing RSA keys again and prompts for an .enc filename before calling hybrid_decrypt().
+Handles invalid choices or exceptions gracefully by printing error messages.
